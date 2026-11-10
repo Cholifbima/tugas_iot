@@ -1,0 +1,12 @@
+{
+  "name": "smart-plant-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dashboard web Smart Plant (Tugas Besar IoT 2026)",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
