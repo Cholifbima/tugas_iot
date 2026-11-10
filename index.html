@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Plant — Monitor Penyiraman</title>
+<meta name="description" content="Dashboard real-time sistem penyiraman dan pencahayaan tanaman otomatis berbasis NodeMCU ESP8266 dan MQTT.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Tata letak: jendela rumah kaca (kembaran 3D) di kiri, alat ukur di kanan, lalu kendali, riwayat, dan catatan. */
+:root {
+  --bg: #ecf1ea;
+  --surface: #f9fbf7;
+  --sunken: #e2e9e0;
+  --ink: #13261c;
+  --muted: #5a6d62;
+  --line: #cfd9cf;
+  --water: #1c6dd0;
+  --leaf: #2a8a4a;
+  --sun: #c98200;
+  --grow: #a343d6;
+  --dry: #c2452a;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --radius: 18px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1613;
+    --surface: #151f1a;
+    --sunken: #1c2923;
+    --ink: #e3ece5;
+    --muted: #8ea297;
+    --line: #27362e;
+    --water: #5ba3f6;
+    --leaf: #5cc07b;
+    --sun: #f0b23c;
+    --grow: #cf7df5;
+    --dry: #f07a5e;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 15px/1.5 var(--font-body);
+}
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding-block: 22px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+h1, h2, p { margin: 0; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
+
+/* ---------- kepala ---------- */
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; }
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.brand svg { flex: none; }
+.brand h1 { font: 700 26px/1.1 var(--font-display); letter-spacing: -0.02em; }
+.brand p { color: var(--muted); font-size: 13px; }
+.status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); font-size: 13px; white-space: nowrap;
+}
+.chip b { font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.chip[data-state="ok"] .dot { background: var(--leaf); box-shadow: 0 0 0 0 var(--leaf); animation: ping 2s infinite; }
+.chip[data-state="wait"] .dot { background: var(--sun); }
+.chip[data-state="bad"] .dot { background: var(--dry); }
+@keyframes ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--leaf) 60%, transparent); } 100% { box-shadow: 0 0 0 8px transparent; } }
+.btn-ghost {
+  padding: 6px 12px; border: 1px dashed var(--muted); border-radius: 999px;
+  background: transparent; font-size: 13px; cursor: pointer;
+}
+.btn-ghost[aria-pressed="true"] { border-style: solid; border-color: var(--sun); background: color-mix(in srgb, var(--sun) 16%, transparent); }
+.simbar {
+  padding: 8px 14px; border-radius: 10px; font-size: 13px;
+  background: color-mix(in srgb, var(--sun) 16%, var(--surface)); border: 1px solid color-mix(in srgb, var(--sun) 45%, transparent);
+}
+
+/* ---------- panel ---------- */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; min-width: 0; }
+.label { font: 500 11px/1.2 var(--font-data); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.panel h2 { font: 700 18px/1.2 var(--font-display); letter-spacing: -0.01em; }
+
+.hero { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 18px; }
+.side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+/* ---------- jendela 3D ---------- */
+.stage {
+  position: relative; min-height: 470px; border-radius: var(--radius); overflow: hidden;
+  border: 1px solid var(--line); background: #dbe7e1; touch-action: pan-y; cursor: grab;
+}
+.stage:active { cursor: grabbing; }
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.stage-top, .stage-bottom { position: absolute; left: 14px; right: 14px; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: none; }
+.stage-top { top: 14px; justify-content: space-between; }
+.stage-bottom { bottom: 14px; }
+.tag {
+  padding: 5px 10px; border-radius: 8px; font: 500 11px/1.3 var(--font-data); letter-spacing: 0.04em;
+  background: rgba(12, 22, 18, 0.62); color: #eef4ef; backdrop-filter: blur(6px);
+}
+.tag i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: #7d8d85; vertical-align: 1px; }
+.tag[data-on="true"] i { background: var(--c, #fff); box-shadow: 0 0 8px var(--c, #fff); }
+.stage-fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: #33453c; }
+
+/* ---------- alat ukur ---------- */
+.gauge-box { position: relative; max-width: 330px; margin: 6px auto 0; }
+.gauge-box svg { display: block; width: 100%; height: auto; overflow: visible; }
+.g-track { fill: none; stroke: var(--sunken); stroke-width: 16; stroke-linecap: round; }
+.g-dryzone { fill: none; stroke: color-mix(in srgb, var(--dry) 30%, var(--sunken)); stroke-width: 16; stroke-linecap: round; }
+.g-value { fill: none; stroke: var(--water); stroke-width: 16; stroke-linecap: round; transition: stroke 0.4s; }
+.gauge-box[data-dry="true"] .g-value { stroke: var(--dry); }
+.g-tick { stroke: var(--muted); stroke-width: 1.4; opacity: 0.6; }
+.g-thr { stroke: var(--ink); stroke-width: 2.5; }
+.g-text { fill: var(--muted); font: 500 10px var(--font-data); }
+.g-text.thr { fill: var(--ink); }
+.g-knob { fill: var(--surface); stroke: var(--water); stroke-width: 4; transition: stroke 0.4s; }
+.gauge-box[data-dry="true"] .g-knob { stroke: var(--dry); }
+.g-center { position: absolute; left: 0; right: 0; top: 37%; text-align: center; pointer-events: none; }
+.g-num { font: 700 64px/1 var(--font-display); letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.g-num small { font-size: 26px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+.g-cap { color: var(--muted); font-size: 13px; }
+.verdict { margin-top: 10px; text-align: center; font-weight: 500; min-height: 1.5em; }
+.verdict[data-tone="dry"] { color: var(--dry); }
+.verdict[data-tone="ok"] { color: var(--leaf); }
+.verdict[data-tone="wet"] { color: var(--water); }
+
+.light { display: flex; align-items: center; gap: 16px; }
+.orb {
+  position: relative; flex: none; width: 54px; height: 54px; border-radius: 50%;
+  background: var(--sun); box-shadow: 0 0 0 7px color-mix(in srgb, var(--sun) 22%, transparent), 0 0 0 14px color-mix(in srgb, var(--sun) 10%, transparent);
+  transition: background 0.8s, box-shadow 0.8s; overflow: hidden;
+}
+.orb::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--surface);
+  transform: translate(110%, -110%); transition: transform 0.8s cubic-bezier(.4, 0, .2, 1);
+}
+.light[data-dark="true"] .orb { background: #b9c6d8; box-shadow: 0 0 0 7px transparent, 0 0 0 14px transparent; }
+.light[data-dark="true"] .orb::after { transform: translate(32%, -22%); }
+.light[data-dark="unknown"] .orb { background: var(--sunken); box-shadow: none; }
+.light-txt { min-width: 0; }
+.light-txt strong { display: block; font: 700 20px/1.2 var(--font-display); }
+.light-txt span { color: var(--muted); font-size: 13px; }
+
+/* ---------- kendali ---------- */
+.controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; padding: 0; }
+.ctl { padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ctl + .ctl { border-left: 1px solid var(--line); }
+.ctl-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ctl-state { font: 700 20px/1.2 var(--font-display); }
+.ctl p { color: var(--muted); font-size: 13px; }
+.seg { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--sunken); gap: 2px; }
+.seg button { border: 0; background: transparent; padding: 8px 16px; border-radius: 9px; cursor: pointer; font-weight: 500; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.sw {
+  position: relative; flex: none; width: 64px; height: 36px; border-radius: 999px; border: 0; padding: 0;
+  background: var(--line); cursor: pointer; transition: background 0.25s;
+}
+.sw::after {
+  content: ""; position: absolute; top: 4px; left: 4px; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.25s;
+}
+.sw[aria-checked="true"] { background: var(--c); }
+.sw[aria-checked="true"]::after { transform: translateX(28px); }
+.sw.pending::after { animation: wait 0.7s ease-in-out infinite alternate; }
+@keyframes wait { to { opacity: 0.35; } }
+button:disabled { cursor: not-allowed; opacity: 0.5; }
+.hint { padding: 0 20px 16px; grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+
+/* ---------- riwayat ---------- */
+.head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 18px; margin-bottom: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; background: var(--c); vertical-align: -1px; }
+.chart { position: relative; height: 300px; }
+.chart canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 18px; }
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 16px; margin-top: 14px; }
+.stat b { display: block; font: 700 28px/1.15 var(--font-display); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.stat span { color: var(--muted); font-size: 13px; }
+.log { list-style: none; margin: 12px 0 0; padding: 0; max-height: 216px; overflow-y: auto; font-size: 13px; }
+.log li { display: flex; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); }
+.log li:first-child { border-top: 0; }
+.log time { flex: none; font: 400 12px/1.6 var(--font-data); color: var(--muted); }
+.log .empty { color: var(--muted); }
+
+footer { color: var(--muted); font: 400 12px/1.7 var(--font-data); overflow-wrap: anywhere; }
+
+@media (max-width: 860px) {
+  .hero, .lower { grid-template-columns: minmax(0, 1fr); }
+  .stage { min-height: 0; aspect-ratio: 1 / 1; max-width: 100%; }
+  .controls { grid-template-columns: minmax(0, 1fr); }
+  .ctl + .ctl { border-left: 0; border-top: 1px solid var(--line); }
+  .hint { padding-top: 0; }
+  .chart { height: 260px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <svg width="38" height="38" viewBox="0 0 38 38" aria-hidden="true">
+        <rect width="38" height="38" rx="11" fill="var(--ink)"/>
+        <path d="M19 30V17" stroke="var(--surface)" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M19 19c0-6 4-9 9-9 0 6-3 9-9 9z" fill="var(--leaf)"/>
+        <path d="M19 23c0-4-3-7-8-7 0 5 3 7 8 7z" fill="var(--water)"/>
+      </svg>
+      <div>
+        <h1>Smart Plant</h1>
+        <p>Tugas Besar IoT 2026 · penyiraman dan pencahayaan tanaman otomatis</p>
+      </div>
+    </div>
+    <div class="status">
+      <span class="chip" id="chipBroker" data-state="wait"><span class="dot"></span><span>Broker <b id="txtBroker">menghubungkan…</b></span></span>
+      <span class="chip" id="chipDevice" data-state="wait"><span class="dot"></span><span>NodeMCU <b id="txtDevice">menunggu data</b></span></span>
+      <button class="btn-ghost" id="btnSim" type="button" aria-pressed="false">Simulasi</button>
+    </div>
+  </header>
+
+  <div class="simbar" id="simbar" hidden>
+    <b>Mode simulasi.</b> Angka di halaman ini dibuat oleh browser, bukan dari sensor. Matikan tombol Simulasi untuk kembali ke data NodeMCU.
+  </div>
+
+  <section class="hero">
+    <div class="stage" id="stage" aria-label="Model 3D tanaman yang mengikuti kondisi sensor">
+      <canvas id="scene"></canvas>
+      <div class="stage-top">
+        <span class="tag">KEMBARAN DIGITAL</span>
+        <span class="tag">geser untuk memutar</span>
+      </div>
+      <div class="stage-bottom">
+        <span class="tag" id="tagPump" style="--c:#6fb4ff" data-on="false"><i></i><span>Pompa —</span></span>
+        <span class="tag" id="tagLamp" style="--c:#e08bff" data-on="false"><i></i><span>Grow light —</span></span>
+        <span class="tag" id="tagLdr" style="--c:#ffc95c" data-on="false"><i></i><span>Cahaya —</span></span>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="panel">
+        <span class="label">Sensor kelembapan tanah · A0</span>
+        <div class="gauge-box" id="gaugeBox" data-dry="false">
+          <svg viewBox="0 0 240 215" role="img" aria-label="Alat ukur kelembapan tanah" id="gauge"></svg>
+          <div class="g-center">
+            <div class="g-num"><span id="soilNum">--</span><small>%</small></div>
+            <div class="g-cap">kelembapan tanah</div>
+          </div>
+        </div>
+        <p class="verdict" id="verdict">Menunggu pembacaan pertama dari NodeMCU</p>
+      </div>
+
+      <div class="panel">
+        <span class="label">Sensor cahaya LDR · D5</span>
+        <div class="light" id="light" data-dark="unknown" style="margin-top:12px">
+          <div class="orb" aria-hidden="true"></div>
+          <div class="light-txt">
+            <strong id="lightTitle">Belum ada data</strong>
+            <span id="lightSub">Sensor digital: hanya membedakan terang dan gelap</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel controls" aria-label="Kendali">
+    <div class="ctl">
+      <span class="label">Mode sistem</span>
+      <div class="ctl-row">
+        <span class="ctl-state" id="modeState">—</span>
+        <div class="seg" role="group" aria-label="Mode sistem">
+          <button type="button" id="btnAuto" aria-pressed="false" disabled>Otomatis</button>
+          <button type="button" id="btnManual" aria-pressed="false" disabled>Manual</button>
+        </div>
+      </div>
+      <p>Otomatis: pompa menyala saat tanah di bawah 40%, grow light menyala saat gelap.</p>
+    </div>
+    <div class="ctl">
+      <span class="label">Pompa air · relay D1</span>
+      <div class="ctl-row">
+        <span class="ctl-state" id="pumpState">—</span>
+        <button type="button" class="sw" id="swPump" role="switch" aria-checked="false" aria-label="Pompa air" style="--c:var(--water)" disabled></button>
+      </div>
+      <p id="pumpNote">Menunggu data.</p>
+    </div>
+    <div class="ctl">
+      <span class="label">Grow light · relay D2</span>
+      <div class="ctl-row">
+        <span class="ctl-state" id="lampState">—</span>
+        <button type="button" class="sw" id="swLamp" role="switch" aria-checked="false" aria-label="Grow light" style="--c:var(--grow)" disabled></button>
+      </div>
+      <p id="lampNote">Menunggu data.</p>
+    </div>
+    <p class="hint" id="hint">Kendali aktif setelah NodeMCU mengirim data.</p>
+  </section>
+
+  <section class="panel">
+    <div class="head">
+      <div>
+        <span class="label">Riwayat</span>
+        <h2>5 menit terakhir</h2>
+      </div>
+      <div class="legend">
+        <span><i style="--c:var(--water)"></i>Kelembapan tanah</span>
+        <span><i style="--c:var(--water);opacity:.45"></i>Pompa menyala</span>
+        <span><i style="--c:var(--grow)"></i>Grow light menyala</span>
+        <span><i style="--c:var(--muted)"></i>Gelap</span>
+      </div>
+    </div>
+    <div class="chart"><canvas id="chart" role="img" aria-label="Grafik kelembapan tanah dan status aktuator"></canvas></div>
+  </section>
+
+  <section class="lower">
+    <div class="panel">
+      <span class="label">Sesi ini</span>
+      <div class="stats">
+        <div class="stat"><b id="stMsgs">0</b><span>pesan diterima</span></div>
+        <div class="stat"><b id="stGap">—</b><span>jeda antar pesan</span></div>
+        <div class="stat"><b id="stCount">0</b><span>kali pompa menyala</span></div>
+        <div class="stat"><b id="stDur">0:00</b><span>total waktu menyiram</span></div>
+      </div>
+    </div>
+    <div class="panel">
+      <span class="label">Catatan kejadian</span>
+      <ul class="log" id="log"><li class="empty">Belum ada kejadian.</li></ul>
+    </div>
+  </section>
+
+  <footer>
+    broker.hivemq.com · data: smartplant/tubes2026/data · kendali: smartplant/tubes2026/control · NodeMCU ESP8266
+  </footer>
+</div>
+
+<script src="vendor/mqtt.min.js"></script>
+<script src="vendor/three.min.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  // ====================== Konfigurasi ======================
+  const BROKER = 'wss://broker.hivemq.com:8884/mqtt';
+  const TOPIC_DATA = 'smartplant/tubes2026/data';
+  const TOPIC_CONTROL = 'smartplant/tubes2026/control';
+  const THRESHOLD = 40;          // sama dengan soilThreshold di firmware
+  const OFFLINE_MS = 6000;       // firmware mengirim tiap 2 detik
+  const WINDOW_MS = 5 * 60 * 1000;
+
+  const $ = (id) => document.getElementById(id);
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const clock = (d = new Date()) => d.toLocaleTimeString('id-ID');
+
+  // ====================== Keadaan ======================
+  const state = { soil: null, dark: null, autoMode: null, pump: null, lamp: null };
+  let brokerUp = false, deviceUp = false, simOn = false;
+  let history = [];
+  let lastLive = 0, offlineTimer = null;
+  const stats = { msgs: 0, gap: null, count: 0, durMs: 0 };
+
+  // ====================== Catatan kejadian ======================
+  const logEl = $('log');
+  function log(text) {
+    const empty = logEl.querySelector('.empty');
+    if (empty) empty.remove();
+    const li = document.createElement('li');
+    const t = document.createElement('time');
+    t.textContent = clock();
+    const s = document.createElement('span');
+    s.textContent = text;
+    li.append(t, s);
+    logEl.prepend(li);
+    while (logEl.children.length > 40) logEl.lastChild.remove();
+  }
+
+  // ====================== Alat ukur kelembapan ======================
+  const G = { cx: 120, cy: 125, r: 92, a0: 135, sweep: 270 };
+  const pt = (pct, r) => {
+    const a = (G.a0 + G.sweep * pct / 100) * Math.PI / 180;
+    return [G.cx + r * Math.cos(a), G.cy + r * Math.sin(a)];
+  };
+  const arc = (from, to) => {
+    const [x1, y1] = pt(from, G.r), [x2, y2] = pt(to, G.r);
+    const large = (to - from) * G.sweep / 100 > 180 ? 1 : 0;
+    return `M${x1.toFixed(2)} ${y1.toFixed(2)}A${G.r} ${G.r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
+  };
+  (function buildGauge() {
+    let s = `<path class="g-track" d="${arc(0, 100)}"/><path class="g-dryzone" d="${arc(0, THRESHOLD)}"/>`;
+    s += `<path class="g-value" id="gValue" d="${arc(0, 100)}" pathLength="100" stroke-dasharray="0 100" opacity="0"/>`;
+    for (let p = 0; p <= 100; p += 10) {
+      const [x1, y1] = pt(p, G.r + 13), [x2, y2] = pt(p, G.r + (p % 50 === 0 ? 21 : 18));
+      s += `<line class="g-tick" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+    }
+    const [tx1, ty1] = pt(THRESHOLD, G.r - 11), [tx2, ty2] = pt(THRESHOLD, G.r + 24);
+    s += `<line class="g-thr" x1="${tx1}" y1="${ty1}" x2="${tx2}" y2="${ty2}"/>`;
+    const [lx, ly] = pt(THRESHOLD, G.r + 30);
+    s += `<text class="g-text thr" x="${lx - 2}" y="${ly}" text-anchor="end">batas ${THRESHOLD}%</text>`;
+    const [zx, zy] = pt(0, G.r + 30), [hx, hy] = pt(100, G.r + 30);
+    s += `<text class="g-text" x="${zx}" y="${zy + 6}" text-anchor="middle">0 kering</text>`;
+    s += `<text class="g-text" x="${hx}" y="${hy + 6}" text-anchor="middle">100 basah</text>`;
+    s += `<circle class="g-knob" id="gKnob" r="7" cx="0" cy="0" opacity="0"/>`;
+    $('gauge').innerHTML = s;
+  })();
+  const gValue = $('gValue'), gKnob = $('gKnob');
+  let gShown = 0, gTarget = null, gRaf = 0;
+  function paintGauge(v) {
+    gValue.setAttribute('stroke-dasharray', `${v.toFixed(2)} 100`);
+    const [x, y] = pt(v, G.r);
+    gKnob.setAttribute('cx', x); gKnob.setAttribute('cy', y);
+    $('soilNum').textContent = Math.round(v);
+  }
+  function setGauge(v) {
+    if (gTarget === null) { gValue.setAttribute('opacity', 1); gKnob.setAttribute('opacity', 1); }
+    gTarget = v;
+    if (reduceMotion) { gShown = v; paintGauge(v); return; }
+    cancelAnimationFrame(gRaf);
+    const step = () => {
+      gShown += (gTarget - gShown) * 0.14;
+      if (Math.abs(gTarget - gShown) < 0.15) gShown = gTarget;
+      paintGauge(gShown);
+      if (gShown !== gTarget) gRaf = requestAnimationFrame(step);
+    };
+    gRaf = requestAnimationFrame(step);
+  }
+
+  // ====================== Grafik riwayat ======================
+  const chartCv = $('chart'), cx2 = chartCv.getContext('2d');
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function drawChart() {
+    const box = chartCv.parentElement.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const W = Math.max(200, box.width), H = box.height;
+    if (chartCv.width !== Math.round(W * dpr) || chartCv.height !== Math.round(H * dpr)) {
+      chartCv.width = Math.round(W * dpr); chartCv.height = Math.round(H * dpr);
+    }
+    const c = cx2;
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, W, H);
+    const col = { ink: css('--ink'), muted: css('--muted'), line: css('--line'), water: css('--water'), grow: css('--grow'), dry: css('--dry') };
+    const mono = `11px ${css('--font-data')}`;
+    const stripH = 9, stripGap = 6, strips = 3;
+    const L = 78, R = 44, T = 10;
+    const B = 22 + strips * (stripH + stripGap) + 6;
+    const pw = W - L - R, ph = H - T - B;
+    const yOf = (v) => T + ph * (1 - v / 100);
+    const tEnd = history.length ? history[history.length - 1].t : Date.now();
+    const tStart = tEnd - WINDOW_MS;
+    const xOf = (t) => L + pw * (t - tStart) / WINDOW_MS;
+
+    // garis bantu
+    c.font = mono; c.textBaseline = 'middle'; c.lineWidth = 1;
+    for (const v of [0, 25, 50, 75, 100]) {
+      c.strokeStyle = col.line; c.setLineDash([]);
+      c.beginPath(); c.moveTo(L, yOf(v) + 0.5); c.lineTo(L + pw, yOf(v) + 0.5); c.stroke();
+      c.fillStyle = col.muted; c.textAlign = 'right';
+      c.fillText(v + '%', L - 8, yOf(v));
+    }
+    // batas siram
+    c.strokeStyle = col.dry; c.setLineDash([5, 4]);
+    c.beginPath(); c.moveTo(L, yOf(THRESHOLD) + 0.5); c.lineTo(L + pw, yOf(THRESHOLD) + 0.5); c.stroke();
+    c.setLineDash([]);
+    c.fillStyle = col.dry; c.textAlign = 'left';
+    c.fillText('batas', L + pw + 6, yOf(THRESHOLD));
+
+    // sumbu waktu
+    c.fillStyle = col.muted; c.textBaseline = 'top';
+    for (let m = 0; m <= 5; m++) {
+      if (pw < 420 && m !== 0 && m !== 5) continue;
+      const x = L + pw * (1 - m / 5);
+      c.textAlign = m === 0 ? 'right' : m === 5 ? 'left' : 'center';
+      c.fillText(m === 0 ? 'sekarang' : `-${m} mnt`, x, T + ph + 6);
+    }
+
+    // jalur status
+    const names = [['pump', 'Pompa', col.water], ['lamp', 'Grow light', col.grow], ['dark', 'Gelap', col.muted]];
+    names.forEach(([key, name, color], i) => {
+      const y = T + ph + 24 + i * (stripH + stripGap);
+      c.fillStyle = col.line; c.globalAlpha = 0.5;
+      c.fillRect(L, y, pw, stripH); c.globalAlpha = 1;
+      c.fillStyle = col.muted; c.textAlign = 'right'; c.textBaseline = 'middle';
+      c.fillText(name, L - 8, y + stripH / 2 + 0.5);
+      c.fillStyle = color; c.globalAlpha = key === 'pump' ? 0.75 : 1;
+      for (let k = 0; k < history.length; k++) {
+        const h = history[k]; if (!h[key]) continue;
+        const next = history[k + 1];
+        const t2 = next && next.t - h.t < OFFLINE_MS ? next.t : h.t + 2000;
+        const x1 = Math.max(L, xOf(h.t)), x2 = Math.min(L + pw, xOf(Math.min(t2, tEnd)) + 0.6);
+        if (x2 > x1) c.fillRect(x1, y, x2 - x1, stripH);
+      }
+      c.globalAlpha = 1;
+    });
+
+    const pts = history.filter((h) => h.t >= tStart);
+    if (!pts.length) {
+      c.fillStyle = col.muted; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.font = `14px ${css('--font-body')}`;
+      c.fillText('Grafik terisi setelah NodeMCU mengirim data', L + pw / 2, T + ph / 2);
+      return;
+    }
+    // kurva kelembapan, terputus bila perangkat sempat offline
+    const segs = []; let cur = [];
+    pts.forEach((h, k) => {
+      if (k && h.t - pts[k - 1].t > OFFLINE_MS) { segs.push(cur); cur = []; }
+      cur.push(h);
+    });
+    segs.push(cur);
+    for (const seg of segs) {
+      c.beginPath();
+      seg.forEach((h, k) => k ? c.lineTo(xOf(h.t), yOf(h.soil)) : c.moveTo(xOf(h.t), yOf(h.soil)));
+      c.strokeStyle = col.water; c.lineWidth = 2; c.lineJoin = 'round'; c.stroke();
+      c.lineTo(xOf(seg[seg.length - 1].t), yOf(0)); c.lineTo(xOf(seg[0].t), yOf(0)); c.closePath();
+      c.fillStyle = col.water; c.globalAlpha = 0.1; c.fill(); c.globalAlpha = 1;
+    }
+    const last = pts[pts.length - 1];
+    c.fillStyle = css('--surface'); c.strokeStyle = col.water; c.lineWidth = 2.5;
+    c.beginPath(); c.arc(xOf(last.t), yOf(last.soil), 4.5, 0, 7); c.fill(); c.stroke();
+    c.fillStyle = col.ink; c.textAlign = 'left'; c.textBaseline = 'middle'; c.font = mono;
+    const ly = Math.abs(yOf(last.soil) - yOf(THRESHOLD)) < 11 ? yOf(last.soil) - 13 : yOf(last.soil);
+    c.fillText(last.soil + '%', L + pw + 8, ly);
+  }
+  new ResizeObserver(drawChart).observe(chartCv.parentElement);
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawChart);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawChart);
+
+  // ====================== Tampilan ======================
+  const fmtDur = (ms) => { const s = Math.round(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  const pending = {};
+  function setPending(el, on) {
+    el.classList.toggle('pending', on);
+    clearTimeout(pending[el.id]);
+    if (on) pending[el.id] = setTimeout(() => {
+      el.classList.remove('pending');
+      log('Tidak ada balasan dari NodeMCU untuk perintah terakhir');
+    }, 4000);
+  }
+
+  function render() {
+    const has = state.soil !== null;
+    const canSend = (simOn || (brokerUp && deviceUp)) && has;
+    const manual = state.autoMode === false;
+
+    $('btnAuto').disabled = $('btnManual').disabled = !canSend;
+    $('swPump').disabled = $('swLamp').disabled = !canSend || !manual;
+    $('btnAuto').setAttribute('aria-pressed', String(state.autoMode === true));
+    $('btnManual').setAttribute('aria-pressed', String(manual));
+    $('modeState').textContent = !has ? '—' : manual ? 'Manual' : 'Otomatis';
+
+    $('swPump').setAttribute('aria-checked', String(!!state.pump));
+    $('swLamp').setAttribute('aria-checked', String(!!state.lamp));
+    $('pumpState').textContent = !has ? '—' : state.pump ? 'Menyiram' : 'Mati';
+    $('lampState').textContent = !has ? '—' : state.lamp ? 'Menyala' : 'Mati';
+    if (has) {
+      $('pumpNote').textContent = manual ? 'Dikendalikan dari halaman ini.'
+        : state.pump ? `Tanah ${state.soil}%, di bawah batas ${THRESHOLD}%.` : `Tanah ${state.soil}%, belum perlu disiram.`;
+      $('lampNote').textContent = manual ? 'Dikendalikan dari halaman ini.'
+        : state.lamp ? 'Menyala karena sensor membaca gelap.' : 'Mati karena cahaya ruangan cukup.';
+    }
+    $('hint').textContent = !has ? 'Kendali aktif setelah NodeMCU mengirim data.'
+      : !canSend ? 'NodeMCU tidak merespons, jadi perintah belum bisa dikirim.'
+      : manual ? 'Mode manual: pompa dan grow light mengikuti sakelar di atas, sensor diabaikan.'
+      : 'Pindah ke Manual untuk menyalakan pompa atau grow light sendiri.';
+
+    const dry = has && state.soil < THRESHOLD;
+    $('gaugeBox').dataset.dry = String(dry);
+    const v = $('verdict');
+    if (has) {
+      v.dataset.tone = dry ? 'dry' : state.soil > 70 ? 'wet' : 'ok';
+      v.textContent = dry ? `Kering, ${THRESHOLD - state.soil} poin di bawah batas siram`
+        : state.soil > 70 ? 'Basah, air masih banyak' : 'Lembap, air cukup';
+    }
+
+    const lightEl = $('light');
+    lightEl.dataset.dark = state.dark === null ? 'unknown' : String(state.dark);
+    if (state.dark !== null) {
+      $('lightTitle').textContent = state.dark ? 'Gelap' : 'Terang';
+      $('lightSub').textContent = state.dark ? 'Cahaya kurang, tanaman butuh grow light' : 'Cahaya ruangan cukup untuk tanaman';
+    }
+
+    const tag = (id, on, text) => { $(id).dataset.on = String(!!on); $(id).lastElementChild.textContent = text; };
+    tag('tagPump', state.pump, 'Pompa ' + (!has ? '—' : state.pump ? 'menyiram' : 'mati'));
+    tag('tagLamp', state.lamp, 'Grow light ' + (!has ? '—' : state.lamp ? 'menyala' : 'mati'));
+    tag('tagLdr', state.dark === false, 'Cahaya ' + (state.dark === null ? '—' : state.dark ? 'gelap' : 'terang'));
+
+    $('stMsgs').textContent = stats.msgs;
+    $('stGap').textContent = stats.gap === null ? '—' : (stats.gap / 1000).toFixed(1).replace('.', ',') + ' dtk';
+    $('stCount').textContent = stats.count;
+    $('stDur').textContent = fmtDur(stats.durMs);
+  }
+
+  function setBroker(kind, text) { $('chipBroker').dataset.state = kind; $('txtBroker').textContent = text; }
+  function setDevice(kind, text) { $('chipDevice').dataset.state = kind; $('txtDevice').textContent = text; }
+
+  // ====================== Data masuk ======================
+  function handleData(d, retained) {
+    if (!d || typeof d.soil !== 'number') return;
+    const now = Date.now();
+    const next = {
+      soil: Math.max(0, Math.min(100, Math.round(d.soil))),
+      dark: !!d.dark, autoMode: !!d.autoMode, pump: !!d.pump, lamp: !!d.lamp
+    };
+    const prev = { ...state };
+    const first = prev.soil === null;
+    Object.assign(state, next);
+    setGauge(state.soil);
+
+    if (retained) {
+      // Pesan tersimpan di broker: keadaan terakhir, belum tentu perangkat sedang menyala.
+      if (!deviceUp) setDevice('wait', 'data terakhir tersimpan');
+      render(); return;
+    }
+
+    if (!deviceUp) { deviceUp = true; log(simOn ? 'Simulasi mulai mengirim data' : 'NodeMCU online'); }
+    setDevice('ok', (simOn ? 'simulasi · ' : 'online · ') + clock());
+    clearTimeout(offlineTimer);
+    offlineTimer = setTimeout(() => {
+      deviceUp = false;
+      setDevice('bad', 'offline, tidak ada data > 6 dtk');
+      log('NodeMCU offline');
+      render();
+    }, OFFLINE_MS);
+
+    stats.msgs++;
+    if (lastLive) {
+      const gap = now - lastLive;
+      stats.gap = gap;
+      if (prev.pump && gap < OFFLINE_MS) stats.durMs += gap;
+    }
+    lastLive = now;
+
+    if (!first) {
+      if (prev.autoMode !== state.autoMode) log('Mode berubah ke ' + (state.autoMode ? 'Otomatis' : 'Manual'));
+      if (prev.pump !== state.pump) log(state.pump ? `Pompa menyala (tanah ${state.soil}%)` : `Pompa mati (tanah ${state.soil}%)`);
+      if (prev.lamp !== state.lamp) log(state.lamp ? 'Grow light menyala' : 'Grow light mati');
+      if (prev.dark !== state.dark) log(state.dark ? 'Sensor cahaya membaca gelap' : 'Sensor cahaya membaca terang');
+    }
+    if (state.pump && (first || !prev.pump)) stats.count++;
+    if (prev.pump !== state.pump || first) setPending($('swPump'), false);
+    if (prev.lamp !== state.lamp || first) setPending($('swLamp'), false);
+
+    history.push({ t: now, ...next });
+    while (history.length && history[0].t < now - WINDOW_MS - 4000) history.shift();
+    render(); drawChart();
+  }
+
+  // ====================== MQTT ======================
+  let client = null;
+  function connect() {
+    if (typeof mqtt === 'undefined') { setBroker('bad', 'pustaka MQTT gagal dimuat'); return; }
+    client = mqtt.connect(BROKER, {
+      clientId: 'WebSmartPlant_' + Math.random().toString(16).slice(2, 10),
+      protocolVersion: 4, clean: true, reconnectPeriod: 2000, connectTimeout: 8000
+    });
+    client.on('connect', () => {
+      brokerUp = true; setBroker('ok', 'terhubung');
+      client.subscribe(TOPIC_DATA);
+      render();
+    });
+    client.on('reconnect', () => setBroker('wait', 'menyambung ulang…'));
+    client.on('close', () => { brokerUp = false; setBroker('bad', 'terputus'); render(); });
+    client.on('error', () => setBroker('bad', 'gagal terhubung'));
+    client.on('message', (topic, payload, packet) => {
+      if (simOn || topic !== TOPIC_DATA) return;
+      try { handleData(JSON.parse(payload.toString()), !!packet.retain); }
+      catch (e) { console.error('JSON tidak terbaca:', e); }
+    });
+  }
+
+  function send(cmd) {
+    log('Perintah dikirim: ' + cmd);
+    if (simOn) { sim.command(cmd); return; }
+    if (client && brokerUp) client.publish(TOPIC_CONTROL, cmd);
+  }
+  $('btnAuto').addEventListener('click', () => { if (state.autoMode !== true) send('MODE_AUTO'); });
+  $('btnManual').addEventListener('click', () => { if (state.autoMode !== false) send('MODE_MANUAL'); });
+  $('swPump').addEventListener('click', () => { setPending($('swPump'), true); send(state.pump ? 'PUMP_OFF' : 'PUMP_ON'); });
+  $('swLamp').addEventListener('click', () => { setPending($('swLamp'), true); send(state.lamp ? 'LAMP_OFF' : 'LAMP_ON'); });
+
+  // ====================== Simulasi (meniru logika firmware) ======================
+  const sim = {
+    s: null, timer: 0,
+    start() {
+      this.s = { soil: 47, dark: false, autoMode: true, pump: false, lamp: false, n: 0 };
+      this.push();
+      this.timer = setInterval(() => this.tick(), 2000);
+    },
+    stop() { clearInterval(this.timer); },
+    logic() { const s = this.s; if (s.autoMode) { s.pump = s.soil < THRESHOLD; s.lamp = s.dark; } },
+    tick() {
+      const s = this.s; s.n++;
+      s.soil = Math.max(0, Math.min(100, s.soil + (s.pump ? 4 : -1.3)));
+      s.dark = Math.floor(s.n / 14) % 2 === 1;
+      this.push();
+    },
+    push() { this.logic(); handleData({ ...this.s, soil: Math.round(this.s.soil) }, false); },
+    command(cmd) {
+      const s = this.s;
+      if (cmd === 'MODE_AUTO') s.autoMode = true;
+      else if (cmd === 'MODE_MANUAL') s.autoMode = false;
+      else if (!s.autoMode) {
+        if (cmd === 'PUMP_ON') s.pump = true;
+        if (cmd === 'PUMP_OFF') s.pump = false;
+        if (cmd === 'LAMP_ON') s.lamp = true;
+        if (cmd === 'LAMP_OFF') s.lamp = false;
+      }
+      this.push();
+    }
+  };
+  function resetSession() {
+    clearTimeout(offlineTimer);
+    Object.assign(state, { soil: null, dark: null, autoMode: null, pump: null, lamp: null });
+    history = []; lastLive = 0; deviceUp = false;
+    Object.assign(stats, { msgs: 0, gap: null, count: 0, durMs: 0 });
+    gTarget = null; gShown = 0;
+    gValue.setAttribute('opacity', 0); gKnob.setAttribute('opacity', 0);
+    $('soilNum').textContent = '--';
+    $('verdict').textContent = 'Menunggu pembacaan pertama dari NodeMCU'; delete $('verdict').dataset.tone;
+    $('lightTitle').textContent = 'Belum ada data';
+    $('lightSub').textContent = 'Sensor digital: hanya membedakan terang dan gelap';
+    $('pumpNote').textContent = $('lampNote').textContent = 'Menunggu data.';
+    setDevice('wait', 'menunggu data');
+    logEl.innerHTML = '<li class="empty">Belum ada kejadian.</li>';
+  }
+  function setSim(on) {
+    simOn = on;
+    $('btnSim').setAttribute('aria-pressed', String(on));
+    $('simbar').hidden = !on;
+    sim.stop(); resetSession();
+    if (on) sim.start();
+    else if (client && brokerUp) { client.unsubscribe(TOPIC_DATA); client.subscribe(TOPIC_DATA); }
+    render(); drawChart();
+  }
+  $('btnSim').addEventListener('click', () => setSim(!simOn));
+
+  // ====================== Kembaran 3D ======================
+  function initScene() {
+    const stage = $('stage'), canvas = $('scene');
+    if (typeof THREE === 'undefined') throw new Error('three.js tidak dimuat');
+    const T = THREE;
+    const renderer = new T.WebGLRenderer({ canvas, antialias: true });
+    renderer.outputEncoding = T.sRGBEncoding;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = T.PCFSoftShadowMap;
+
+    const scene = new T.Scene();
+    const DAY = new T.Color('#d9e8e2'), NIGHT = new T.Color('#0f1a22');
+    scene.background = DAY.clone();
+    scene.fog = new T.Fog(DAY.clone(), 13, 30);
+    const camera = new T.PerspectiveCamera(32, 1, 0.1, 100);
+    const target = new T.Vector3(0, 2.35, 0);
+
+    const hemi = new T.HemisphereLight('#ffffff', '#9aa894', 0.9);
+    scene.add(hemi);
+    const sun = new T.DirectionalLight('#fff3dc', 1.0);
+    sun.position.set(4.5, 8, 5.5); sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    Object.assign(sun.shadow.camera, { left: -5, right: 5, top: 6, bottom: -2, near: 1, far: 22 });
+    sun.shadow.bias = -0.0005;
+    scene.add(sun);
+
+    const std = (color, o = {}) => new T.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0, ...o });
+    const add = (geo, mat, x = 0, y = 0, z = 0, shadow = true) => {
+      const m = new T.Mesh(geo, mat); m.position.set(x, y, z);
+      m.castShadow = shadow; m.receiveShadow = true; scene.add(m); return m;
+    };
+
+    // lantai dan tatakan
+    const floor = add(new T.CircleGeometry(30, 48), std('#b9c9c0', { roughness: 1 }), 0, 0, 0, false);
+    floor.rotation.x = -Math.PI / 2;
+    add(new T.CylinderGeometry(2.9, 2.9, 0.12, 64), std('#a88f70'), -0.1, 0.06, 0);
+
+    // pot dan tanah
+    const POT_Y = 0.12, SOIL_Y = 1.36;
+    add(new T.CylinderGeometry(1.05, 0.72, 1.3, 56, 1, true), std('#b9603f', { side: T.DoubleSide }), 0, POT_Y + 0.65, 0);
+    const base = add(new T.CircleGeometry(0.72, 40), std('#9c4f33'), 0, POT_Y + 0.01, 0, false); base.rotation.x = -Math.PI / 2;
+    const rim = add(new T.TorusGeometry(1.06, 0.085, 14, 56), std('#c46a47'), 0, POT_Y + 1.3, 0); rim.rotation.x = Math.PI / 2;
+    const soilMat = std('#8a6a4a', { roughness: 1 });
+    const soil = add(new T.CircleGeometry(1.02, 48), soilMat, 0, SOIL_Y, 0, false); soil.rotation.x = -Math.PI / 2;
+    const SOIL_DRY = new T.Color('#b39672'), SOIL_WET = new T.Color('#3a271b');
+
+    // sensor kelembapan (probe dua kaki)
+    const pcb = std('#1b2a33', { roughness: 0.5 });
+    add(new T.BoxGeometry(0.2, 0.34, 0.035), pcb, 0.6, SOIL_Y + 0.5, 0.35);
+    add(new T.BoxGeometry(0.05, 0.5, 0.03), std('#c9b037', { metalness: 0.6, roughness: 0.4 }), 0.54, SOIL_Y + 0.12, 0.35);
+    add(new T.BoxGeometry(0.05, 0.5, 0.03), std('#c9b037', { metalness: 0.6, roughness: 0.4 }), 0.66, SOIL_Y + 0.12, 0.35);
+
+    // tanaman
+    const stemCurve = new T.CatmullRomCurve3([
+      new T.Vector3(0, SOIL_Y - 0.05, 0), new T.Vector3(0.06, 2.0, 0.03),
+      new T.Vector3(-0.05, 2.7, -0.02), new T.Vector3(0.02, 3.35, 0)
+    ]);
+    const leafMatA = std('#2f9a4f', { side: T.DoubleSide, roughness: 0.65 });
+    const leafMatB = std('#3bab5c', { side: T.DoubleSide, roughness: 0.65 });
+    add(new T.TubeGeometry(stemCurve, 24, 0.05, 8), leafMatA);
+    const leafGeo = (() => {
+      const len = 1.15, g = new T.PlaneGeometry(len, 0.62, 14, 6);
+      g.translate(len / 2, 0, 0);
+      const p = g.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        const u = p.getX(i) / len;
+        const w = Math.pow(Math.sin(Math.PI * Math.pow(u, 0.75)), 0.8);
+        const y = p.getY(i) * w;
+        p.setY(i, y);
+        p.setZ(i, 0.42 * u - 0.5 * u * u + 0.45 * Math.abs(y));
+      }
+      g.rotateX(-Math.PI / 2); g.computeVertexNormals();
+      return g;
+    })();
+    const leaves = [];
+    const N_LEAF = 10;
+    for (let i = 0; i < N_LEAF; i++) {
+      const f = i / (N_LEAF - 1);
+      const pivot = new T.Group();
+      pivot.position.copy(stemCurve.getPoint(0.2 + 0.8 * f));
+      pivot.rotation.y = i * 2.39996;
+      const tilt = new T.Group();
+      const mesh = new T.Mesh(leafGeo, i % 2 ? leafMatB : leafMatA);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      mesh.scale.setScalar(1.2 - 0.6 * f);
+      tilt.add(mesh); pivot.add(tilt); scene.add(pivot);
+      leaves.push({ tilt, f, phase: i * 1.7 });
+    }
+    const LEAF_OK_A = new T.Color('#2f9a4f'), LEAF_OK_B = new T.Color('#3bab5c'), LEAF_DRY = new T.Color('#a39a45');
+
+    // tandon air, selang, dan tetesan
+    const tankX = -2.1, tankZ = 0.4;
+    add(new T.BoxGeometry(0.78, 0.7, 0.78), std('#2f7fd8', { transparent: true, opacity: 0.75, roughness: 0.2 }), tankX, 0.12 + 0.36, tankZ, false);
+    add(new T.BoxGeometry(0.9, 1.15, 0.9), std('#dfeaf2', { transparent: true, opacity: 0.28, roughness: 0.1 }), tankX, 0.12 + 0.58, tankZ);
+    add(new T.BoxGeometry(0.34, 0.2, 0.34), std('#26323a'), tankX, 1.37, tankZ);
+    const NOZ = new T.Vector3(-0.5, 2.05, 0.55);
+    const hose = new T.CatmullRomCurve3([
+      new T.Vector3(tankX, 1.45, tankZ), new T.Vector3(tankX + 0.05, 2.25, tankZ),
+      new T.Vector3(-1.25, 2.62, 0.5), new T.Vector3(-0.6, 2.45, 0.55), NOZ
+    ]);
+    add(new T.TubeGeometry(hose, 40, 0.045, 8), std('#26323a', { roughness: 0.5 }));
+    const dropGeo = new T.SphereGeometry(0.042, 8, 8);
+    const dropMat = new T.MeshStandardMaterial({ color: '#6fb4ff', roughness: 0.1, emissive: '#1c6dd0', emissiveIntensity: 0.5 });
+    const drops = [];
+    for (let i = 0; i < 30; i++) {
+      const m = new T.Mesh(dropGeo, dropMat); m.visible = false; scene.add(m);
+      drops.push({ m, phase: i / 30, ox: (Math.random() - 0.5) * 0.06, oz: (Math.random() - 0.5) * 0.06 });
+    }
+    const puddleMat = new T.MeshBasicMaterial({ color: '#2a1a12', transparent: true, opacity: 0 });
+    const puddle = new T.Mesh(new T.CircleGeometry(0.36, 28), puddleMat);
+    puddle.rotation.x = -Math.PI / 2; puddle.position.set(NOZ.x, SOIL_Y + 0.004, NOZ.z); scene.add(puddle);
+
+    // grow light
+    const metal = std('#2a3238', { roughness: 0.45, metalness: 0.4 });
+    add(new T.CylinderGeometry(0.42, 0.46, 0.08, 32), metal, 2.0, 0.16, -0.7);
+    const neck = new T.CatmullRomCurve3([
+      new T.Vector3(2.0, 0.18, -0.7), new T.Vector3(2.0, 3.6, -0.7),
+      new T.Vector3(1.6, 4.65, -0.55), new T.Vector3(0.7, 4.95, -0.2), new T.Vector3(0.1, 4.82, 0)
+    ]);
+    add(new T.TubeGeometry(neck, 40, 0.05, 8), metal);
+    add(new T.CylinderGeometry(0.2, 0.66, 0.36, 40, 1, true), std('#2a3238', { side: T.DoubleSide, roughness: 0.45 }), 0, 4.66, 0);
+    const GROW = new T.Color('#d05cff');
+    const ledMat = new T.MeshStandardMaterial({ color: '#3a3340', emissive: GROW, emissiveIntensity: 0 });
+    const led = add(new T.CircleGeometry(0.58, 32), ledMat, 0, 4.52, 0, false); led.rotation.x = Math.PI / 2;
+    const spot = new T.SpotLight(GROW, 0, 9, 0.52, 0.7, 1);
+    spot.position.set(0, 4.5, 0); spot.target.position.set(0, 1.3, 0);
+    spot.castShadow = true; spot.shadow.mapSize.set(1024, 1024); spot.shadow.bias = -0.0005;
+    scene.add(spot, spot.target);
+    const beamMat = new T.MeshBasicMaterial({ color: GROW, transparent: true, opacity: 0, side: T.DoubleSide, depthWrite: false });
+    const beam = new T.Mesh(new T.ConeGeometry(1.75, 3.3, 40, 1, true), beamMat);
+    beam.position.set(0, 4.5 - 1.65, 0); scene.add(beam);
+
+    // kamera: ayunan pelan + geser untuk memutar
+    let userAz = 0, drag = null, dist = 12;
+    stage.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, az: userAz }; stage.setPointerCapture(e.pointerId); });
+    stage.addEventListener('pointermove', (e) => { if (drag) userAz = drag.az - (e.clientX - drag.x) * 0.008; });
+    const endDrag = () => { drag = null; };
+    stage.addEventListener('pointerup', endDrag); stage.addEventListener('pointercancel', endDrag);
+
+    function resize() {
+      const w = stage.clientWidth, h = stage.clientHeight;
+      if (!w || !h) return;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      dist = 12.2 / Math.min(1, camera.aspect / 1.05);
+      camera.updateProjectionMatrix();
+    }
+    new ResizeObserver(resize).observe(stage); resize();
+
+    // nilai yang dihaluskan agar perubahan tidak meloncat
+    const s = { moist: 0.5, day: 1, pump: 0, lamp: 0 };
+    const tmp = new T.Color();
+    let prevT = performance.now();
+    function frame(now) {
+      requestAnimationFrame(frame);
+      const dt = Math.min(0.05, (now - prevT) / 1000); prevT = now;
+      const t = now / 1000, k = 1 - Math.exp(-dt * 2.2);
+      s.moist += ((state.soil === null ? 50 : state.soil) / 100 - s.moist) * k;
+      s.day += ((state.dark ? 0 : 1) - s.day) * k;
+      s.pump += ((state.pump ? 1 : 0) - s.pump) * (1 - Math.exp(-dt * 5));
+      s.lamp += ((state.lamp ? 1 : 0) - s.lamp) * (1 - Math.exp(-dt * 4));
+
+      // siang / malam
+      scene.background.copy(NIGHT).lerp(DAY, s.day);
+      scene.fog.color.copy(scene.background);
+      hemi.intensity = 0.2 + 0.42 * s.day;
+      sun.intensity = 0.05 + 0.62 * s.day;
+
+      // tanah dan daun mengikuti kelembapan
+      soilMat.color.copy(SOIL_DRY).lerp(SOIL_WET, s.moist);
+      const vigor = Math.max(0, Math.min(1, (s.moist * 100 - 12) / 33));
+      leafMatA.color.copy(LEAF_DRY).lerp(LEAF_OK_A, vigor);
+      leafMatB.color.copy(LEAF_DRY).lerp(LEAF_OK_B, vigor);
+      for (const l of leaves) {
+        const sway = reduceMotion ? 0 : Math.sin(t * 1.1 + l.phase) * 0.035;
+        l.tilt.rotation.z = (-0.8 + 1.25 * vigor) * (1 - 0.35 * l.f) + 0.35 * l.f + sway;
+      }
+
+      // air
+      const fall = NOZ.y - SOIL_Y;
+      for (let i = 0; i < drops.length; i++) {
+        const d = drops[i];
+        const on = d.phase < s.pump - 0.03;
+        d.m.visible = on;
+        if (!on) continue;
+        const u = (t * 1.6 + d.phase * 7.3) % 1;
+        d.m.position.set(NOZ.x + d.ox * u * 4, NOZ.y - fall * u * u, NOZ.z + d.oz * u * 4);
+      }
+      puddleMat.opacity = 0.55 * s.pump;
+      puddle.scale.setScalar(0.6 + 0.4 * s.pump + (reduceMotion ? 0 : 0.05 * Math.sin(t * 6)));
+
+      // grow light
+      ledMat.emissiveIntensity = 2.2 * s.lamp;
+      spot.intensity = 2.6 * s.lamp;
+      beamMat.opacity = (0.07 + 0.09 * (1 - s.day)) * s.lamp;
+
+      const az = 0.5 + userAz + (reduceMotion ? 0 : Math.sin(t * 0.17) * 0.28);
+      const el = 0.2;
+      camera.position.set(
+        target.x + Math.sin(az) * Math.cos(el) * dist,
+        target.y + Math.sin(el) * dist,
+        target.z + Math.cos(az) * Math.cos(el) * dist
+      );
+      camera.lookAt(target);
+      renderer.render(scene, camera);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // ====================== Mulai ======================
+  try { initScene(); }
+  catch (e) {
+    console.error(e);
+    $('scene').remove();
+    const f = document.createElement('div');
+    f.className = 'stage-fallback';
+    f.textContent = 'Model 3D tidak bisa ditampilkan di browser ini. Data sensor tetap berjalan.';
+    $('stage').prepend(f);
+  }
+  render(); drawChart();
+  connect();
+  if (location.hash === '#simulasi') setSim(true);
+})();
+</script>
+</body>
+</html>
