@@ -28,15 +28,12 @@ Lalu buka `http://localhost:8080`. Tidak ada dependensi dan tidak ada proses bui
 
 ## Deploy otomatis ke Azure Web App
 
-Workflow `.github/workflows/azure-webapp.yml` men-deploy setiap ada push ke `main`. Workflow ini dilewati sampai langkah berikut selesai:
+Workflow `.github/workflows/main_smartplant.yml` men-deploy ke Web App `SmartPlant` setiap ada push ke `main`. Yang dibutuhkan hanya satu secret:
 
-1. Buat Web App di Azure Portal: Publish **Code**, Runtime stack **Node 20 LTS**, sistem operasi **Linux**.
-2. Di Web App: **Settings → Configuration → General settings**, nyalakan **SCM Basic Auth Publishing Credentials**, lalu simpan.
-3. Di halaman **Overview** Web App, klik **Download publish profile**.
-4. Di GitHub: **Settings → Secrets and variables → Actions**.
-   - Tab **Secrets**: buat `AZURE_WEBAPP_PUBLISH_PROFILE`, isi dengan seluruh isi berkas publish profile.
-   - Tab **Variables**: buat `AZURE_WEBAPP_NAME`, isi dengan nama Web App.
-5. Push ke `main`, atau jalankan workflow dari tab **Actions**.
+1. Di Azure Portal, buka Web App **SmartPlant**. Di **Settings → Configuration → General settings**, pastikan **SCM Basic Auth Publishing Credentials** menyala.
+2. Di halaman **Overview**, klik **Download publish profile**.
+3. Di GitHub: **Settings → Secrets and variables → Actions → New repository secret**, nama `AZURE_WEBAPP_PUBLISH_PROFILE`, isi dengan seluruh isi berkas publish profile.
+4. Push ke `main`, atau jalankan workflow dari tab **Actions**.
 
 Azure menjalankan `npm start`, dan server membaca port dari variabel `PORT` yang diberikan Azure.
 
