@@ -14,7 +14,7 @@ Dashboard web untuk sistem penyiraman dan pencahayaan tanaman otomatis berbasis 
 ## Isi halaman
 
 - Model 3D tanaman yang mengikuti sensor: daun layu saat tanah kering, air menetes saat pompa menyala, grow light dan suasana siang/malam mengikuti LDR.
-- Kartu pembacaan sensor: alat ukur kelembapan tanah dengan penanda batas siram 40%, cahaya, mode, pompa, dan grow light.
+- Kartu pembacaan sensor: alat ukur kelembapan tanah dengan penanda batas siram 30%, cahaya, mode, pompa, dan grow light.
 - Grafik 5 menit terakhir, statistik sesi, dan catatan kejadian.
 - Tombol **Simulasi** (atau buka `index.html#simulasi`) untuk mencoba tampilan tanpa alat. Data simulasi dibuat browser, bukan dari sensor.
 

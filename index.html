@@ -285,7 +285,7 @@ main { display: grid; gap: var(--space-2xl); padding-block: var(--space-xl) var(
   const BROKER = 'wss://broker.hivemq.com:8884/mqtt';
   const TOPIC_DATA = 'smartplant/tubes2026/data';
   const TOPIC_CONTROL = 'smartplant/tubes2026/control';
-  const THRESHOLD = 40;          // sama dengan soilThreshold di firmware
+  const THRESHOLD = 30;          // sama dengan soilThreshold di firmware
   const OFFLINE_MS = 6000;       // firmware mengirim tiap 2 detik
   const WINDOW_MS = 5 * 60 * 1000;
 
@@ -496,7 +496,7 @@ main { display: grid; gap: var(--space-2xl); padding-block: var(--space-xl) var(
     $('hint').textContent = !has ? 'Kendali aktif setelah NodeMCU mengirim data.'
       : !canSend ? 'NodeMCU tidak merespons, jadi perintah belum bisa dikirim.'
       : manual ? 'Mode manual: pompa dan grow light mengikuti tombol di atas, sensor diabaikan.'
-      : `Mode otomatis: pompa menyala saat tanah di bawah ${THRESHOLD}%, grow light menyala saat gelap. Pindah ke Manual untuk mengatur sendiri.`;
+      : `Mode otomatis: pompa menyala saat tanah di bawah ${THRESHOLD}%, grow light menyala saat gelap. Pompa menyiram 0,5 detik lalu menunggu air meresap. Pindah ke Manual untuk mengatur sendiri.`;
 
     if (has) {
       const dry = state.soil < THRESHOLD;
@@ -609,23 +609,37 @@ main { display: grid; gap: var(--space-2xl); padding-block: var(--space-xl) var(
   const sim = {
     s: null, timer: 0,
     start() {
-      this.s = { soil: 47, dark: false, autoMode: true, pump: false, lamp: false, n: 0 };
+      this.s = { soil: 36, dark: false, autoMode: true, pump: false, lamp: false, n: 0, pulsing: false, rested: 0 };
       this.push();
       this.timer = setInterval(() => this.tick(), 2000);
     },
-    stop() { clearInterval(this.timer); },
-    logic() { const s = this.s; if (s.autoMode) { s.pump = s.soil < THRESHOLD; s.lamp = s.dark; } },
+    stop() { clearInterval(this.timer); clearTimeout(this.pulse); },
+    logic() {
+      const s = this.s;
+      if (!s.autoMode) return;
+      s.lamp = s.dark;
+      if (s.pulsing) return;
+      s.pump = false;
+      if (Math.round(s.soil) < THRESHOLD && Date.now() - s.rested >= 10000) {
+        s.pump = true; s.pulsing = true;
+        this.pulse = setTimeout(() => {
+          s.pulsing = false; s.pump = false; s.rested = Date.now();
+          s.soil = Math.min(100, s.soil + 6);
+          this.push();
+        }, 500);
+      }
+    },
     tick() {
       const s = this.s; s.n++;
-      s.soil = Math.max(0, Math.min(100, s.soil + (s.pump ? 4 : -1.3)));
+      s.soil = Math.max(0, Math.min(100, s.soil + (s.pump && !s.pulsing ? 4 : -1.3)));
       s.dark = Math.floor(s.n / 14) % 2 === 1;
       this.push();
     },
-    push() { this.logic(); handleData({ ...this.s, soil: Math.round(this.s.soil) }, false); },
+    push() { this.logic(); const s = this.s; handleData({ soil: Math.round(s.soil), dark: s.dark, autoMode: s.autoMode, pump: s.pump, lamp: s.lamp }, false); },
     command(cmd) {
       const s = this.s;
       if (cmd === 'MODE_AUTO') s.autoMode = true;
-      else if (cmd === 'MODE_MANUAL') s.autoMode = false;
+      else if (cmd === 'MODE_MANUAL') { s.autoMode = false; s.pulsing = false; clearTimeout(this.pulse); }
       else if (!s.autoMode) {
         if (cmd === 'PUMP_ON') s.pump = true;
         if (cmd === 'PUMP_OFF') s.pump = false;
