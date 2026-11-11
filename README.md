@@ -24,19 +24,5 @@ Dashboard web untuk sistem penyiraman dan pencahayaan tanaman otomatis berbasis 
 npm start
 ```
 
-Lalu buka `http://localhost:8080`. Tidak ada dependensi dan tidak ada proses build: `server.js` hanya melayani `index.html` dan folder `vendor/` (berisi `mqtt.js` 4.3.7 dan `three.js` r149). Membuka `index.html` langsung di browser juga bisa.
-
 ## Deploy otomatis ke Azure Web App
 
-Workflow `.github/workflows/main_smartplant.yml` men-deploy ke Web App `SmartPlant` setiap ada push ke `main`. Yang dibutuhkan hanya satu secret:
-
-1. Di Azure Portal, buka Web App **SmartPlant**. Di **Settings → Configuration → General settings**, pastikan **SCM Basic Auth Publishing Credentials** menyala.
-2. Di halaman **Overview**, klik **Download publish profile**.
-3. Di GitHub: **Settings → Secrets and variables → Actions → New repository secret**, nama `AZURE_WEBAPP_PUBLISH_PROFILE`, isi dengan seluruh isi berkas publish profile.
-4. Push ke `main`, atau jalankan workflow dari tab **Actions**.
-
-Azure menjalankan `npm start`, dan server membaca port dari variabel `PORT` yang diberikan Azure.
-
-## Desain
-
-Tampilan mengikuti aturan [Hallmark](https://github.com/nutlope/hallmark) dengan tema Furrow: kertas manila, tinta hitam, huruf Red Hat, dan satu warna sinyal jingga.
